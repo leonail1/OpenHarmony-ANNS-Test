@@ -227,6 +227,7 @@ def run_search_case(
             selector,
             ctx.config.k,
             actual_query_limit,
+            ctx.work_dir / "groundtruth" / f"{artifact_prefix}_{selector['selector_id']}_t{threads}",
         )
         recall = recall_at_k(results, groundtruth, ctx.config.k)
     row = {
