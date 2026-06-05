@@ -1,0 +1,44 @@
+adapter_manifest: adapter_manifest.example.yaml
+results_dir: results
+target_npoints: 1000000
+dynamic_cycles: 5
+delete_fraction: 0.60
+pilot_query_limit: 50
+full_query_limit: 1000
+foreground_search_threads: [1, 8]
+k: 10
+datasets:
+  - name: example_dataset
+    base_vectors: /path/to/base.npy
+    base_ids: /path/to/base.ids
+    query_file: /path/to/query.npy
+    vector_format: npy
+    dimensions: 128
+    build_threads: 16
+    search_threads: [1]
+    insert_batches:
+      - name: initial
+        vectors: /path/to/initial_1m.npy
+        ids: /path/to/initial_1m.ids
+        count: 1000000
+      - name: cycle1
+        vectors: /path/to/cycle1_insert.npy
+        ids: /path/to/cycle1_insert.ids
+        count: 600000
+      - name: cycle2
+        vectors: /path/to/cycle2_insert.npy
+        ids: /path/to/cycle2_insert.ids
+        count: 600000
+      - name: cycle3
+        vectors: /path/to/cycle3_insert.npy
+        ids: /path/to/cycle3_insert.ids
+        count: 600000
+      - name: cycle4
+        vectors: /path/to/cycle4_insert.npy
+        ids: /path/to/cycle4_insert.ids
+        count: 600000
+      - name: cycle5
+        vectors: /path/to/cycle5_insert.npy
+        ids: /path/to/cycle5_insert.ids
+        count: 600000
+

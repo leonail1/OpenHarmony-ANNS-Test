@@ -1,0 +1,63 @@
+commands:
+  ann_build_index:
+    command:
+      - /path/to/ann_build_index
+      - --vectors
+      - "{vectors_path}"
+      - --ids
+      - "{ids_path}"
+      - --labels
+      - "{labels_path}"
+      - --label-schema
+      - "{label_schema_path}"
+      - --threads
+      - "{threads}"
+      - --output-manifest
+      - "{output_manifest_path}"
+  ann_filter_search:
+    command:
+      - /path/to/ann_filter_search
+      - --queries
+      - "{query_file}"
+      - --selector
+      - "{selector_file}"
+      - --k
+      - "{k}"
+      - --limit
+      - "{query_limit}"
+      - --threads
+      - "{threads}"
+      - --output
+      - "{output_path}"
+  ann_apply_insert:
+    command:
+      - /path/to/ann_apply_insert
+      - --vectors
+      - "{insert_vectors_path}"
+      - --ids
+      - "{insert_ids_path}"
+      - --labels
+      - "{labels_path}"
+      - --threads
+      - "{threads}"
+      - --output
+      - "{output_path}"
+  ann_apply_delete:
+    command:
+      - /path/to/ann_apply_delete
+      - --ids
+      - "{delete_ids_path}"
+      - --threads
+      - "{threads}"
+      - --output
+      - "{output_path}"
+  ann_label_selectivity:
+    command:
+      - /path/to/ann_label_selectivity
+      - --selector
+      - "{selector_file}"
+      - --threads
+      - "{threads}"
+      - --output
+      - "{output_path}"
+
