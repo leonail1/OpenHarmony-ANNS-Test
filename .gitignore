@@ -6,6 +6,7 @@ results/
 tmp/
 examples/mock_data/
 *.egg-info/
+tools/bin/
 
 
 build/

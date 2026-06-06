@@ -26,7 +26,12 @@ Build and insert commands receive the generated label CSV. Delete commands recei
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
+./tools/build_groundtruth.sh
 ```
+
+`tools/build_groundtruth.sh` builds the harness-owned C++ exact L2 top-k
+groundtruth binary. Set `ANNS_GT_BINARY` only when you intentionally want to use
+another compatible binary.
 
 ## Run
 
@@ -61,4 +66,3 @@ pytest --config /tmp/anns-smoke/acceptance_config.negative.yaml
 ## Outputs
 
 The results directory contains JSON/JSONL/CSV artifacts, including space audit, label selectivity, static search, dynamic update chain, foreground latency, mutation timing, single-query resources, and `acceptance_summary.json`.
-

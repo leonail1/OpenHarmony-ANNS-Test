@@ -16,6 +16,10 @@ Adapters expose five command-template interfaces:
 
 The harness records wall time, max RSS, CPU, IO, recall, latency, space ratio, and failures externally. It does not trust the implementation to self-report acceptance metrics except for raw search results and label selectivity counts.
 
+Groundtruth is computed by the harness-owned C++ exact L2 top-k tool at
+`tools/bin/compute_groundtruth`, built from `tools/cpp/compute_groundtruth.cpp`.
+Implementations under test do not provide or influence groundtruth.
+
 ## Labels
 
 The harness creates a merged CSV label file for build and insert. The first version supports uniform labels only. Equality, range, and intersect workloads cover fixed target selectivities:
@@ -31,4 +35,3 @@ Selectors with fewer than `k` live candidates are marked invalid and are not tre
 - Static Filtered Search Test: all datasets, selector types, and target selectivities; pilot skip at 20 ms; full run at up to 1000 queries.
 - Dynamic Update Chain Test: from 0 vectors to target size, then 5 cycles of 60% delete and insert back to target size with foreground searches during mutations.
 - Single Query Resource Test: one-query filtered search with no groundtruth, recording latency and max RSS.
-

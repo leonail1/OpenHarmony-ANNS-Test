@@ -112,10 +112,13 @@ def compute_groundtruth(
         raise
 
 
-def _pipeann_gt_binary() -> Path:
-    return Path(
-        os.environ.get("ANNS_GT_BINARY", "/mnt/nvme1n1/PipeANN-github/build/tests/utils/compute_groundtruth")
-    )
+def _default_gt_binary() -> Path:
+    repo_root = Path(__file__).resolve().parents[1]
+    return repo_root / "tools" / "bin" / "compute_groundtruth"
+
+
+def _gt_binary() -> Path:
+    return Path(os.environ.get("ANNS_GT_BINARY", str(_default_gt_binary())))
 
 
 def _compute_groundtruth_with_pipeann_cpp(
@@ -128,11 +131,14 @@ def _compute_groundtruth_with_pipeann_cpp(
     query_limit: int,
     scratch_dir: Path,
 ) -> dict[int, list[int]]:
-    binary = _pipeann_gt_binary()
+    binary = _gt_binary()
     if not binary.exists():
-        raise FileNotFoundError(f"PipeANN compute_groundtruth binary not found: {binary}")
+        raise FileNotFoundError(
+            f"C++ compute_groundtruth binary not found: {binary}. "
+            "Run tools/build_groundtruth.sh or set ANNS_GT_BINARY."
+        )
     if any(vector_id < 0 or vector_id > np.iinfo(np.uint32).max for vector_id in candidate_ids):
-        raise ValueError("PipeANN C++ groundtruth requires uint32-compatible vector ids")
+        raise ValueError("C++ groundtruth requires uint32-compatible vector ids")
     run_dir = scratch_dir / f"run_{os.getpid()}"
     if run_dir.exists():
         shutil.rmtree(run_dir)
