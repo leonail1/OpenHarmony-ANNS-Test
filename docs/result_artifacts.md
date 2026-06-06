@@ -11,11 +11,13 @@ Expected result files:
 - `static_filtered_search_resource.jsonl`
 - `dynamic_update_chain_results.jsonl`
 - `dynamic_update_foreground_latency.jsonl`
+- `dynamic_foreground_worst_selectors.jsonl`
 - `insert_api_timing.jsonl`
 - `delete_api_timing.jsonl`
 - `dynamic_update_failures.csv`
 - `single_query_latency.jsonl`
 - `single_query_resource.jsonl`
+- `single_query_resource_failures.csv`
 - `acceptance_summary.json`
 
 `acceptance_summary.json` records the pytest exit status, aggregate pass/fail, produced artifacts, and failure files.

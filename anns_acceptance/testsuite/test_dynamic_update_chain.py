@@ -29,7 +29,7 @@ from anns_acceptance.labels import (
     write_label_schema,
 )
 from anns_acceptance.metrics import parse_search_output
-from anns_acceptance.selectors import all_search_selectors, selectivity_check_selectors, typical_single_query_selectors
+from anns_acceptance.selectors import all_search_selectors, selectivity_check_selectors
 from anns_acceptance.testsuite.conftest import (
     StaticContext,
     _append_failure,
@@ -64,6 +64,7 @@ def _run_dataset_chain(
     vector_sources: list[tuple[Path, Path | None]] = []
     vectors_by_id: dict[int, Any] = {}
     foreground_failures: list[dict[str, Any]] = []
+    foreground_calibration: dict[str, Any] | None = None
 
     initial = batches[0]
     insert_rows, batch_ids_path, batch_vectors_path = _insert_batch(
@@ -78,11 +79,16 @@ def _run_dataset_chain(
         phase="initial_insert",
         foreground_vectors_by_id=vectors_by_id,
         foreground_failures=foreground_failures,
+        foreground_calibration=foreground_calibration,
     )
     live_labels.merge(insert_rows)
     vector_sources.append((batch_vectors_path, batch_ids_path))
     vectors_by_id = load_vector_sources(vector_sources, dataset.vector_format, dataset.dimensions)
-    failures.extend(_checkpoint(config, adapter, dataset, root, state_dir, live_labels, vectors_by_id, "cycle0"))
+    cycle0_failures, cycle0_rows = _checkpoint(
+        config, adapter, dataset, root, state_dir, live_labels, vectors_by_id, "cycle0"
+    )
+    failures.extend(cycle0_failures)
+    foreground_calibration = _calibrate_foreground_selector(config, dataset, cycle0_rows)
 
     for cycle in range(1, config.dynamic_cycles + 1):
         delete_ids = _choose_delete_ids(live_labels.ids, config.delete_fraction)
@@ -113,6 +119,7 @@ def _run_dataset_chain(
                 vectors_by_id,
                 f"cycle{cycle}_delete",
                 foreground_failures,
+                foreground_calibration,
             ),
         )
         elapsed_ms = (time.monotonic() - started) * 1000.0
@@ -164,6 +171,7 @@ def _run_dataset_chain(
             phase="insert",
             foreground_vectors_by_id=vectors_by_id,
             foreground_failures=foreground_failures,
+            foreground_calibration=foreground_calibration,
         )
         overlap = set(insert_rows.ids) & set(delete_ids)
         if overlap:
@@ -173,7 +181,10 @@ def _run_dataset_chain(
         live_labels.merge(insert_rows)
         vector_sources.append((batch_vectors_path, batch_ids_path))
         vectors_by_id = load_vector_sources(vector_sources, dataset.vector_format, dataset.dimensions)
-        failures.extend(_checkpoint(config, adapter, dataset, root, state_dir, live_labels, vectors_by_id, f"cycle{cycle}"))
+        checkpoint_failures, _ = _checkpoint(
+            config, adapter, dataset, root, state_dir, live_labels, vectors_by_id, f"cycle{cycle}"
+        )
+        failures.extend(checkpoint_failures)
     failures.extend(foreground_failures)
     return failures
 
@@ -209,6 +220,7 @@ def _insert_batch(
     phase: str,
     foreground_vectors_by_id: dict[int, Any],
     foreground_failures: list[dict[str, Any]],
+    foreground_calibration: dict[str, Any] | None,
 ) -> tuple[LiveLabelStore, Path, Path]:
     generated = ensure_dir(root / "generated")
     available = vector_count(batch.vectors, dataset.vector_format, dataset.dimensions)
@@ -292,6 +304,7 @@ def _insert_batch(
             foreground_vectors_by_id,
             f"cycle{cycle}_{phase}",
             foreground_failures,
+            foreground_calibration,
         ),
     )
     elapsed_ms = (time.monotonic() - started) * 1000.0
@@ -340,7 +353,7 @@ def _checkpoint(
     labels: LiveLabelStore,
     vectors_by_id: dict[int, Any],
     checkpoint: str,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     ctx = StaticContext(
         config=config,
         dataset=dataset,
@@ -355,6 +368,7 @@ def _checkpoint(
         vectors_by_id=vectors_by_id,
     )
     failures: list[dict[str, Any]] = []
+    search_rows: list[dict[str, Any]] = []
     for selector in selectivity_check_selectors():
         row = run_selectivity_case(ctx, selector, checkpoint)
         if not row["pass"]:
@@ -379,10 +393,53 @@ def _checkpoint(
         elif not latency_ok:
             row["failure_reason"] = "avg latency above threshold"
         append_jsonl(config.results_dir / "dynamic_update_chain_results.jsonl", row)
+        search_rows.append(row)
         if not row["pass"]:
             _append_failure(config.results_dir / "dynamic_update_failures.csv", row)
             failures.append(row)
-    return failures
+    return failures, search_rows
+
+
+def _calibrate_foreground_selector(
+    config: AcceptanceConfig,
+    dataset: DatasetConfig,
+    rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    candidates = [row for row in rows if not row.get("invalid_selector") and row.get("avg_latency_ms") is not None]
+    if not candidates:
+        row = {
+            "dataset": dataset.name,
+            "checkpoint": "cycle0",
+            "failure_reason": "no valid selector available for foreground calibration",
+        }
+        _append_failure(config.results_dir / "dynamic_update_failures.csv", row)
+        raise AssertionError(f"no valid selector available for foreground calibration: {dataset.name}")
+    worst = max(
+        candidates,
+        key=lambda row: (
+            float(row.get("avg_latency_ms") or float("-inf")),
+            float(row.get("p95_latency_ms") or float("-inf")),
+            float(row.get("p99_latency_ms") or float("-inf")),
+            str(row.get("selector_id", "")),
+        ),
+    )
+    selector_by_id = {selector["selector_id"]: selector for selector in all_search_selectors()}
+    selector_id = str(worst["selector_id"])
+    selector = selector_by_id[selector_id]
+    artifact = {
+        "dataset": dataset.name,
+        "checkpoint": "cycle0",
+        "selector_id": selector_id,
+        "selector_type": selector.get("selector_type"),
+        "target_selectivity": selector.get("target_selectivity"),
+        "candidate_count": worst.get("candidate_count"),
+        "calibration_avg_latency_ms": worst.get("avg_latency_ms"),
+        "calibration_p95_latency_ms": worst.get("p95_latency_ms"),
+        "calibration_p99_latency_ms": worst.get("p99_latency_ms"),
+        "recall_at_10": worst.get("recall_at_10"),
+    }
+    append_jsonl(config.results_dir / "dynamic_foreground_worst_selectors.jsonl", artifact)
+    return {"selector": selector, "artifact": artifact}
 
 
 def _foreground_search(
@@ -395,20 +452,44 @@ def _foreground_search(
     vectors_by_id: dict[int, Any],
     prefix: str,
     foreground_failures: list[dict[str, Any]] | None = None,
+    foreground_calibration: dict[str, Any] | None = None,
 ) -> None:
     if labels.total() < config.k or not vectors_by_id:
+        return
+    if foreground_calibration is None:
         return
     counter_path = root / "foreground" / f"{prefix}.counter"
     ensure_dir(counter_path.parent)
     counter = int(counter_path.read_text(encoding="utf-8")) if counter_path.exists() else 0
     counter_path.write_text(str(counter + 1), encoding="utf-8")
-    selector = typical_single_query_selectors()[counter % len(typical_single_query_selectors())]
-    if labels.count(selector) < config.k and selector["selector_type"] != "match_all":
-        selector = typical_single_query_selectors()[0]
+    selector = foreground_calibration["selector"]
+    calibration = foreground_calibration["artifact"]
     selector_path = root / "foreground" / f"{prefix}_{counter}.selector.json"
     output_path = root / "foreground" / f"{prefix}_{counter}.search.json"
     selector_to_json(selector_path, selector)
     threads = config.foreground_search_threads[counter % len(config.foreground_search_threads)]
+    candidate_count = labels.count(selector)
+    if candidate_count < config.k:
+        row = {
+            "dataset": dataset.name,
+            "phase": prefix,
+            "threads": threads,
+            "selector_id": selector["selector_id"],
+            "selector_type": selector.get("selector_type"),
+            "target_selectivity": selector.get("target_selectivity"),
+            "candidate_count": candidate_count,
+            "foreground_selector_source": "calibrated_static_worst",
+            "calibration_checkpoint": calibration["checkpoint"],
+            "calibration_avg_latency_ms": calibration["calibration_avg_latency_ms"],
+            "calibration_p95_latency_ms": calibration["calibration_p95_latency_ms"],
+            "pass": False,
+            "failure_reason": "foreground calibrated selector candidate count is smaller than k",
+        }
+        append_jsonl(config.results_dir / "dynamic_update_foreground_latency.jsonl", row)
+        _append_failure(config.results_dir / "dynamic_update_failures.csv", row)
+        if foreground_failures is not None:
+            foreground_failures.append(row)
+        return
     try:
         payload, result = adapter.filter_search(
             dataset_name=dataset.name,
@@ -426,8 +507,15 @@ def _foreground_search(
             "phase": prefix,
             "threads": threads,
             "selector_id": selector["selector_id"],
+            "selector_type": selector.get("selector_type"),
+            "target_selectivity": selector.get("target_selectivity"),
+            "candidate_count": candidate_count,
             "avg_latency_ms": summary.get("avg_latency_ms"),
             "pass": float(summary.get("avg_latency_ms", 1e9)) < config.thresholds.avg_latency_ms_lt,
+            "foreground_selector_source": "calibrated_static_worst",
+            "calibration_checkpoint": calibration["checkpoint"],
+            "calibration_avg_latency_ms": calibration["calibration_avg_latency_ms"],
+            "calibration_p95_latency_ms": calibration["calibration_p95_latency_ms"],
             **result.resource_dict(),
         }
     except Exception as exc:
@@ -436,6 +524,13 @@ def _foreground_search(
             "phase": prefix,
             "threads": threads,
             "selector_id": selector["selector_id"],
+            "selector_type": selector.get("selector_type"),
+            "target_selectivity": selector.get("target_selectivity"),
+            "candidate_count": candidate_count,
+            "foreground_selector_source": "calibrated_static_worst",
+            "calibration_checkpoint": calibration["checkpoint"],
+            "calibration_avg_latency_ms": calibration["calibration_avg_latency_ms"],
+            "calibration_p95_latency_ms": calibration["calibration_p95_latency_ms"],
             "pass": False,
             "failure_reason": str(exc),
         }

@@ -112,6 +112,7 @@ class Thresholds(BaseModel):
     avg_latency_ms_lt: float = 10.0
     pilot_skip_latency_ms: float = 20.0
     delete_ms_per_vector_max: float = 0.5
+    single_query_max_rss_bytes_lt: int = 30_000_000
     selectivity_abs_tolerance: float = 1e-9
 
 

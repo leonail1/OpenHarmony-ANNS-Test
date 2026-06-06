@@ -14,7 +14,7 @@ Adapters expose five command-template interfaces:
 - `ann_apply_delete`
 - `ann_label_selectivity`
 
-The harness records wall time, max RSS, CPU, IO, recall, latency, space ratio, and failures externally. It does not trust the implementation to self-report acceptance metrics except for raw search results and label selectivity counts.
+The harness records wall time, max RSS, CPU, IO, recall, latency, space ratio, and failures externally. It does not trust the implementation to self-report acceptance metrics except for raw search results and label selectivity counts. Single-query max RSS is enforced as an acceptance metric and defaults to `<30,000,000` bytes.
 
 Groundtruth is computed by the harness-owned C++ exact L2 top-k tool at
 `tools/bin/compute_groundtruth`, built from `tools/cpp/compute_groundtruth.cpp`.
@@ -33,5 +33,5 @@ Selectors with fewer than `k` live candidates are marked invalid and are not tre
 - Build Space Test: `index_bytes / raw_bytes < 2.0`.
 - Label Selectivity Test: equality/range counts must match the harness live label table.
 - Static Filtered Search Test: all datasets, selector types, and target selectivities; pilot skip at 20 ms; full run at up to 1000 queries.
-- Dynamic Update Chain Test: from 0 vectors to target size, then 5 cycles of 60% delete and insert back to target size with foreground searches during mutations.
-- Single Query Resource Test: one-query filtered search with no groundtruth, recording latency and max RSS.
+- Dynamic Update Chain Test: from 0 vectors to target size, calibrates the dataset's slowest valid full-search selector at cycle0, then runs 5 cycles of 60% delete and insert back to target size with foreground searches using that calibrated selector during mutations.
+- Single Query Resource Test: one-query filtered search with no groundtruth; latency and max RSS must both satisfy configured thresholds.

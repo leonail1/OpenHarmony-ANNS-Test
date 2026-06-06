@@ -7,6 +7,11 @@ pilot_query_limit: 50
 full_query_limit: 1000
 foreground_search_threads: [1, 8]
 k: 10
+thresholds:
+  expansion_ratio_lt: 2.0
+  recall_at_10_min: 0.98
+  avg_latency_ms_lt: 10.0
+  single_query_max_rss_bytes_lt: 30000000
 datasets:
   - name: example_dataset
     base_vectors: /path/to/base.npy
@@ -41,4 +46,3 @@ datasets:
         vectors: /path/to/cycle5_insert.npy
         ids: /path/to/cycle5_insert.ids
         count: 600000
-

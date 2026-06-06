@@ -63,6 +63,12 @@ A negative smoke config is also generated and should fail because the mock searc
 pytest --config /tmp/anns-smoke/acceptance_config.negative.yaml
 ```
 
+A second negative smoke config should fail because the mock search process intentionally exceeds the single-query max RSS threshold:
+
+```bash
+pytest -m single_query --config /tmp/anns-smoke/acceptance_config.rss_negative.yaml
+```
+
 ## Outputs
 
 The results directory contains JSON/JSONL/CSV artifacts, including space audit, label selectivity, static search, dynamic update chain, foreground latency, mutation timing, single-query resources, and `acceptance_summary.json`.

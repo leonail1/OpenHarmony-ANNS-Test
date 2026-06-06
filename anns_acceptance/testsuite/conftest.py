@@ -258,7 +258,17 @@ def _append_failure(path: Path, row: dict[str, Any]) -> None:
         "inserted_count",
         "deleted_count",
         "avg_latency_ms",
+        "p95_latency_ms",
+        "p99_latency_ms",
         "recall_at_10",
+        "candidate_count",
+        "threads",
+        "max_rss_bytes",
+        "single_query_max_rss_bytes_lt",
+        "foreground_selector_source",
+        "calibration_checkpoint",
+        "calibration_avg_latency_ms",
+        "calibration_p95_latency_ms",
     ]
     current = {field: row.get(field) for field in fields}
     if path.exists():
@@ -288,6 +298,7 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
         "label_selectivity_failures.csv",
         "static_filtered_search_failures.csv",
         "dynamic_update_failures.csv",
+        "single_query_resource_failures.csv",
     ]
     summary["failure_files"] = [name for name in failure_files if (cfg.results_dir / name).exists()]
     write_json(cfg.results_dir / "acceptance_summary.json", summary)

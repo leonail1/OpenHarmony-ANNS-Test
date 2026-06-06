@@ -30,11 +30,13 @@ def main() -> None:
         _write_ids(out / f"insert{cycle}.ids", list(range(cycle * 1000, cycle * 1000 + n)))
     _write_manifest(out / "adapter_manifest.positive.yaml", latency_ms=1.0, selectivity_offset=0)
     _write_manifest(out / "adapter_manifest.negative.yaml", latency_ms=25.0, selectivity_offset=0)
+    _write_manifest(out / "adapter_manifest.rss_negative.yaml", latency_ms=1.0, selectivity_offset=0, allocate_mb=64)
     _write_config(out / "acceptance_config.positive.yaml", out, "adapter_manifest.positive.yaml")
     _write_config(out / "acceptance_config.negative.yaml", out, "adapter_manifest.negative.yaml")
+    _write_config(out / "acceptance_config.rss_negative.yaml", out, "adapter_manifest.rss_negative.yaml")
 
 
-def _write_manifest(path: Path, latency_ms: float, selectivity_offset: int) -> None:
+def _write_manifest(path: Path, latency_ms: float, selectivity_offset: int, allocate_mb: int = 0) -> None:
     mock = "{repo_root}/mock_adapter/mock_ann.py"
     commands = {
         "ann_build_index": [
@@ -76,6 +78,8 @@ def _write_manifest(path: Path, latency_ms: float, selectivity_offset: int) -> N
             "{threads}",
             "--latency-ms",
             str(latency_ms),
+            "--allocate-mb",
+            str(allocate_mb),
         ],
         "ann_apply_insert": [
             "{python}",
@@ -128,10 +132,16 @@ def _write_manifest(path: Path, latency_ms: float, selectivity_offset: int) -> N
 
 
 def _write_config(path: Path, out: Path, manifest_name: str) -> None:
+    if "rss_negative" in manifest_name:
+        suffix = "rss_negative"
+    elif "negative" in manifest_name:
+        suffix = "negative"
+    else:
+        suffix = "positive"
     payload = {
         "adapter_manifest": manifest_name,
-        "results_dir": str(out / ("results_negative" if "negative" in manifest_name else "results_positive")),
-        "work_dir": str(out / ("work_negative" if "negative" in manifest_name else "work_positive")),
+        "results_dir": str(out / f"results_{suffix}"),
+        "work_dir": str(out / f"work_{suffix}"),
         "target_npoints": 1000,
         "dynamic_cycles": 1,
         "delete_fraction": 0.60,

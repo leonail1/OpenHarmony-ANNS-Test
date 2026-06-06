@@ -4,11 +4,10 @@ import argparse
 import csv
 import json
 import shutil
+import struct
 import time
 from pathlib import Path
 from typing import Any
-
-import numpy as np
 
 
 def main() -> None:
@@ -50,6 +49,7 @@ def main() -> None:
     search.add_argument("--state-dir", required=True)
     search.add_argument("--threads", type=int, required=True)
     search.add_argument("--latency-ms", type=float, default=1.0)
+    search.add_argument("--allocate-mb", type=int, default=0)
 
     selectivity = sub.add_parser("selectivity")
     selectivity.add_argument("--selector", required=True)
@@ -116,29 +116,35 @@ def cmd_delete(args: argparse.Namespace) -> None:
 
 def cmd_search(args: argparse.Namespace) -> None:
     state = _load_state(Path(args.state_dir))
-    queries = np.load(args.queries).astype(np.float32)[: args.limit]
+    allocation = bytearray(max(0, args.allocate_mb) * 1024 * 1024)
+    if allocation:
+        for offset in range(0, len(allocation), 4096):
+            allocation[offset] = 1
+    queries = _load_npy_float32_2d(Path(args.queries))[: args.limit]
     selector = _read_json(Path(args.selector))
     candidate_ids = [int(vector_id) for vector_id, row in state["labels"].items() if _matches(row, selector)]
     candidate_ids.sort()
     results = []
-    if candidate_ids:
-        matrix = np.array([state["vectors"][str(vector_id)] for vector_id in candidate_ids], dtype=np.float32)
-    else:
-        matrix = np.empty((0, queries.shape[1]), dtype=np.float32)
     for query_id, query in enumerate(queries):
         if len(candidate_ids) == 0:
             ids: list[int] = []
         else:
-            diff = matrix - query
-            distances = np.einsum("ij,ij->i", diff, diff)
-            order = np.argsort(distances, kind="stable")[: args.k]
-            ids = [candidate_ids[int(i)] for i in order]
+            scored = []
+            for vector_id in candidate_ids:
+                vector = state["vectors"][str(vector_id)]
+                distance = sum((a - b) * (a - b) for a, b in zip(vector, query, strict=False))
+                scored.append((distance, vector_id))
+            scored.sort(key=lambda item: (item[0], item[1]))
+            ids = [vector_id for _, vector_id in scored[: args.k]]
         results.append({"query_id": query_id, "ids": ids, "latency_ms": args.latency_ms})
+    if allocation:
+        time.sleep(0.25)
     _write_json(
         Path(args.output),
         {
             "results": results,
             "summary": {
+                "candidate_count": len(candidate_ids),
                 "avg_latency_ms": args.latency_ms,
                 "p50_latency_ms": args.latency_ms,
                 "p95_latency_ms": args.latency_ms,
@@ -164,9 +170,34 @@ def cmd_selectivity(args: argparse.Namespace) -> None:
 
 
 def _load_vectors_with_ids(vectors_path: Path, ids_path: Path) -> tuple[np.ndarray, list[int]]:
+    import numpy as np
+
     vectors = np.load(vectors_path).astype(np.float32)
     ids = _read_ids(ids_path)
     return vectors[: len(ids)], ids
+
+
+def _load_npy_float32_2d(path: Path) -> list[list[float]]:
+    with path.open("rb") as handle:
+        magic = handle.read(6)
+        if magic != b"\x93NUMPY":
+            raise ValueError(f"not an npy file: {path}")
+        major, _minor = handle.read(2)
+        if major == 1:
+            header_len = struct.unpack("<H", handle.read(2))[0]
+        else:
+            header_len = struct.unpack("<I", handle.read(4))[0]
+        header = handle.read(header_len).decode("latin1")
+        if "'<f4'" not in header and '"<f4"' not in header and "'|f4'" not in header and '"|f4"' not in header:
+            raise ValueError(f"only float32 npy is supported by mock search: {path}")
+        shape_start = header.index("(") + 1
+        shape_end = header.index(")", shape_start)
+        shape = [int(part.strip()) for part in header[shape_start:shape_end].split(",") if part.strip()]
+        if len(shape) != 2:
+            raise ValueError(f"only 2D npy arrays are supported by mock search: {path}")
+        rows, dim = shape
+        values = struct.unpack("<" + "f" * (rows * dim), handle.read(rows * dim * 4))
+    return [list(values[row * dim : (row + 1) * dim]) for row in range(rows)]
 
 
 def _read_ids(path: Path) -> list[int]:
