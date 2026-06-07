@@ -31,13 +31,15 @@ def test_single_query_resource(static_contexts):
                 rss_delta = row.get("rss_measurement_delta_bytes")
                 rss_ratio = row.get("rss_measurement_ratio")
                 rss_ok = time_v_recorded and int(time_v_rss) < ctx.config.thresholds.single_query_max_rss_bytes_lt
-                if time_v_recorded and psutil_recorded:
+                if not ctx.config.thresholds.require_psutil_rss_sanity:
+                    psutil_sanity_ok = True
+                elif time_v_recorded and psutil_recorded:
                     psutil_sanity_ok = (
                         int(rss_delta or 0) <= ctx.config.thresholds.rss_measurement_max_abs_diff_bytes
                         or float(rss_ratio or float("inf")) <= ctx.config.thresholds.rss_measurement_max_ratio
                     )
                 else:
-                    psutil_sanity_ok = not ctx.config.thresholds.require_psutil_rss_sanity
+                    psutil_sanity_ok = False
                 row["single_query_max_rss_bytes_lt"] = ctx.config.thresholds.single_query_max_rss_bytes_lt
                 row["require_time_v_rss_measurement"] = ctx.config.thresholds.require_time_v_rss_measurement
                 row["require_psutil_rss_sanity"] = ctx.config.thresholds.require_psutil_rss_sanity
