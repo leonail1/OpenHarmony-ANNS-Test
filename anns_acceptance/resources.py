@@ -11,6 +11,10 @@ import psutil
 class ResourceSample:
     wall_time_s: float = 0.0
     max_rss_bytes: int | None = None
+    psutil_max_rss_bytes: int | None = None
+    time_v_max_rss_bytes: int | None = None
+    rss_measurement_delta_bytes: int | None = None
+    rss_measurement_ratio: float | None = None
     user_cpu_s: float | None = None
     system_cpu_s: float | None = None
     read_bytes: int | None = None
@@ -54,7 +58,12 @@ class ProcessSampler:
     def finish(self) -> ResourceSample:
         self.sample()
         wall = time.monotonic() - self.started_at
-        sample = ResourceSample(wall_time_s=wall, max_rss_bytes=self.max_rss_bytes or None)
+        psutil_rss = self.max_rss_bytes or None
+        sample = ResourceSample(
+            wall_time_s=wall,
+            max_rss_bytes=psutil_rss,
+            psutil_max_rss_bytes=psutil_rss,
+        )
         if self._proc is None:
             return sample
         try:
@@ -83,7 +92,7 @@ def parse_time_v(stderr: str) -> dict[str, int | float]:
     parsed: dict[str, int | float] = {}
     rss = re.search(r"Maximum resident set size \(kbytes\):\s*(\d+)", stderr)
     if rss:
-        parsed["max_rss_bytes"] = int(rss.group(1)) * 1024
+        parsed["time_v_max_rss_bytes"] = int(rss.group(1)) * 1024
     user = re.search(r"User time \(seconds\):\s*([0-9.]+)", stderr)
     if user:
         parsed["user_cpu_s"] = float(user.group(1))

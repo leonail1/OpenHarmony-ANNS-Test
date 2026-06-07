@@ -21,3 +21,9 @@ Expected result files:
 - `acceptance_summary.json`
 
 `acceptance_summary.json` records the pytest exit status, aggregate pass/fail, produced artifacts, and failure files.
+
+`single_query_resource.jsonl` includes `max_rss_bytes` as the official GNU
+`/usr/bin/time -v` RSS. It also records `time_v_max_rss_bytes`,
+`psutil_max_rss_bytes`, `rss_measurement_delta_bytes`, and
+`rss_measurement_ratio`; the psutil channel is a sanity check, not the official
+RSS source.

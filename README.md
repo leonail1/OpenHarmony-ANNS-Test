@@ -69,6 +69,16 @@ A second negative smoke config should fail because the mock search process inten
 pytest -m single_query --config /tmp/anns-smoke/acceptance_config.rss_negative.yaml
 ```
 
+Single-query RSS is measured through two channels. The official acceptance RSS
+is GNU `/usr/bin/time -v`; result rows report it as both
+`time_v_max_rss_bytes` and `max_rss_bytes`. The harness also samples the adapter
+process tree with `psutil` and reports `psutil_max_rss_bytes`,
+`rss_measurement_delta_bytes`, and `rss_measurement_ratio` as a sanity check. By
+default the single-query test requires time-v RSS and uses only that value for
+the RSS threshold. Set `require_psutil_rss_sanity: true` when debugging the
+measurement path and you want the test to fail on missing or divergent psutil
+samples.
+
 ## Outputs
 
 The results directory contains JSON/JSONL/CSV artifacts, including space audit, label selectivity, static search, dynamic update chain, foreground latency, mutation timing, single-query resources, and `acceptance_summary.json`.

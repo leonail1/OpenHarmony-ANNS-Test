@@ -12,7 +12,11 @@
     "expansion_ratio_lt": 2.0,
     "recall_at_10_min": 0.98,
     "avg_latency_ms_lt": 10.0,
-    "single_query_max_rss_bytes_lt": 30000000
+    "single_query_max_rss_bytes_lt": 30000000,
+    "require_time_v_rss_measurement": true,
+    "require_psutil_rss_sanity": false,
+    "rss_measurement_max_abs_diff_bytes": 8000000,
+    "rss_measurement_max_ratio": 2.0
   },
   "datasets": [
     {
