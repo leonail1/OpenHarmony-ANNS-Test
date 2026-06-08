@@ -32,6 +32,6 @@ Selectors with fewer than `k` live candidates are marked invalid and are not tre
 
 - Build Space Test: `index_bytes / raw_bytes < 2.0`.
 - Label Selectivity Test: equality/range counts must match the harness live label table.
-- Static Filtered Search Test: all datasets, selector types, and target selectivities; pilot skip at 20 ms; full run at up to 1000 queries.
-- Dynamic Update Chain Test: from 0 vectors to target size, calibrates the dataset's slowest valid full-search selector at cycle0, then runs 5 cycles of 60% delete and insert back to target size with foreground searches using that calibrated selector during mutations.
+- Static Filtered Search Test: all datasets, selector types, and target selectivities; pilot skip at 20 ms; full run at up to 1000 queries. It also records the worst-latency valid selector per dataset in `static_foreground_worst_selectors.jsonl`.
+- Dynamic Update Chain Test: from 0 vectors to target size, then runs 5 cycles of 60% delete and insert back to target size with foreground searches during mutations. Foreground searches must use the worst selector produced by the Static Filtered Search Test in the same `results_dir`; running `dynamic` alone is invalid.
 - Single Query Resource Test: one-query filtered search with no groundtruth; latency and max RSS must both satisfy configured thresholds.

@@ -9,9 +9,10 @@ Expected result files:
 - `static_filtered_search_results.jsonl`
 - `static_filtered_search_failures.csv`
 - `static_filtered_search_resource.jsonl`
+- `static_foreground_worst_selectors.jsonl`
+- `dynamic_foreground_worst_selectors.jsonl`
 - `dynamic_update_chain_results.jsonl`
 - `dynamic_update_foreground_latency.jsonl`
-- `dynamic_foreground_worst_selectors.jsonl`
 - `insert_api_timing.jsonl`
 - `delete_api_timing.jsonl`
 - `dynamic_update_failures.csv`

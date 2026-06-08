@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import shutil
 import time
 from pathlib import Path
@@ -64,7 +65,7 @@ def _run_dataset_chain(
     vector_sources: list[tuple[Path, Path | None]] = []
     vectors_by_id: dict[int, Any] = {}
     foreground_failures: list[dict[str, Any]] = []
-    foreground_calibration: dict[str, Any] | None = None
+    foreground_calibration = _load_static_foreground_selector(config, dataset)
 
     initial = batches[0]
     insert_rows, batch_ids_path, batch_vectors_path = _insert_batch(
@@ -84,11 +85,10 @@ def _run_dataset_chain(
     live_labels.merge(insert_rows)
     vector_sources.append((batch_vectors_path, batch_ids_path))
     vectors_by_id = load_vector_sources(vector_sources, dataset.vector_format, dataset.dimensions)
-    cycle0_failures, cycle0_rows = _checkpoint(
+    cycle0_failures, _ = _checkpoint(
         config, adapter, dataset, root, state_dir, live_labels, vectors_by_id, "cycle0"
     )
     failures.extend(cycle0_failures)
-    foreground_calibration = _calibrate_foreground_selector(config, dataset, cycle0_rows)
 
     for cycle in range(1, config.dynamic_cycles + 1):
         delete_ids = _choose_delete_ids(live_labels.ids, config.delete_fraction)
@@ -400,46 +400,60 @@ def _checkpoint(
     return failures, search_rows
 
 
-def _calibrate_foreground_selector(
+def _load_static_foreground_selector(
     config: AcceptanceConfig,
     dataset: DatasetConfig,
-    rows: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    candidates = [row for row in rows if not row.get("invalid_selector") and row.get("avg_latency_ms") is not None]
-    if not candidates:
+    artifact_path = config.results_dir / "static_foreground_worst_selectors.jsonl"
+    if not artifact_path.exists():
         row = {
             "dataset": dataset.name,
-            "checkpoint": "cycle0",
-            "failure_reason": "no valid selector available for foreground calibration",
+            "expected_artifact": str(artifact_path),
+            "failure_reason": (
+                "static foreground worst selector artifact is missing in this results_dir; "
+                "run static filtered search and dynamic in the same test run"
+            ),
         }
         _append_failure(config.results_dir / "dynamic_update_failures.csv", row)
-        raise AssertionError(f"no valid selector available for foreground calibration: {dataset.name}")
-    worst = max(
-        candidates,
-        key=lambda row: (
-            float(row.get("avg_latency_ms") or float("-inf")),
-            float(row.get("p95_latency_ms") or float("-inf")),
-            float(row.get("p99_latency_ms") or float("-inf")),
-            str(row.get("selector_id", "")),
-        ),
-    )
+        raise AssertionError(row["failure_reason"])
+    artifact: dict[str, Any] | None = None
+    with artifact_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            candidate = json.loads(line)
+            if candidate.get("dataset") == dataset.name:
+                artifact = candidate
+    if artifact is None:
+        row = {
+            "dataset": dataset.name,
+            "artifact_path": str(artifact_path),
+            "failure_reason": "static foreground worst selector artifact has no row for dataset",
+        }
+        _append_failure(config.results_dir / "dynamic_update_failures.csv", row)
+        raise AssertionError(row["failure_reason"])
     selector_by_id = {selector["selector_id"]: selector for selector in all_search_selectors()}
-    selector_id = str(worst["selector_id"])
+    selector_id = str(artifact["selector_id"])
+    if selector_id not in selector_by_id:
+        row = {
+            "dataset": dataset.name,
+            "selector_id": selector_id,
+            "artifact_path": str(artifact_path),
+            "failure_reason": "static foreground worst selector is not in selector workload",
+        }
+        _append_failure(config.results_dir / "dynamic_update_failures.csv", row)
+        raise AssertionError(row["failure_reason"])
     selector = selector_by_id[selector_id]
-    artifact = {
-        "dataset": dataset.name,
-        "checkpoint": "cycle0",
+    dynamic_artifact = {
+        **artifact,
+        "checkpoint": "static",
         "selector_id": selector_id,
         "selector_type": selector.get("selector_type"),
         "target_selectivity": selector.get("target_selectivity"),
-        "candidate_count": worst.get("candidate_count"),
-        "calibration_avg_latency_ms": worst.get("avg_latency_ms"),
-        "calibration_p95_latency_ms": worst.get("p95_latency_ms"),
-        "calibration_p99_latency_ms": worst.get("p99_latency_ms"),
-        "recall_at_10": worst.get("recall_at_10"),
+        "artifact_path": str(artifact_path),
     }
-    append_jsonl(config.results_dir / "dynamic_foreground_worst_selectors.jsonl", artifact)
-    return {"selector": selector, "artifact": artifact}
+    append_jsonl(config.results_dir / "dynamic_foreground_worst_selectors.jsonl", dynamic_artifact)
+    return {"selector": selector, "artifact": dynamic_artifact}
 
 
 def _foreground_search(

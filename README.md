@@ -46,9 +46,13 @@ pytest --config acceptance_config.yaml
 pytest -m space --config acceptance_config.yaml
 pytest -m selectivity --config acceptance_config.yaml
 pytest -m static --config acceptance_config.yaml
-pytest -m dynamic --config acceptance_config.yaml
+pytest -m "static or dynamic" --config acceptance_config.yaml
 pytest -m single_query --config acceptance_config.yaml
 ```
+
+`dynamic` intentionally depends on the worst foreground selector selected by the
+`static` test in the same `results_dir`. Running `pytest -m dynamic` alone is
+invalid and should fail before mutation work starts.
 
 ## Smoke
 
