@@ -25,6 +25,11 @@ int run_static(int argc, char **argv) {
   const uint32_t mem_l = args.u32("mem-L", 0);
   const uint64_t k = args.u64("k", 10);
   const uint64_t l_search = args.u64("L", 100);
+  const double recall_min = args.f64("recall-min", 98.0);
+  auto l_candidates = oh::parse_u32_list(args.get("L-candidates", ""));
+  if (l_candidates.empty()) {
+    l_candidates.push_back(static_cast<uint32_t>(l_search));
+  }
   const auto out_jsonl = std::filesystem::path(args.get("out-jsonl", "results/static_filtered.jsonl"));
 
   if (index_prefix.empty() || query_path.empty()) {
@@ -65,48 +70,101 @@ int run_static(int argc, char **argv) {
     query_attrs = std::move(ret.second);
   }
 
-  std::vector<uint32_t> result_tags(query_num * k);
-  std::vector<float> result_dists(query_num * k);
-  std::vector<pipeann::QueryStats> stats(query_num);
-  omp_set_num_threads(threads);
+  struct SearchMetrics {
+    uint32_t L = 0;
+    float recall = -1.0f;
+    double avg_latency_ms = 0.0;
+    double p50_latency_ms = 0.0;
+    double p95_latency_ms = 0.0;
+    double p99_latency_ms = 0.0;
+    double avg_ios = 0.0;
+    double pre_filter_ratio = 0.0;
+    double in_filter_ratio = 0.0;
+    double post_filter_ratio = 0.0;
+  };
+
+  auto run_one_l = [&](uint32_t current_l) {
+    std::vector<uint32_t> result_tags(query_num * k);
+    std::vector<float> result_dists(query_num * k);
+    std::vector<pipeann::QueryStats> stats(query_num);
+    omp_set_num_threads(threads);
 
 #pragma omp parallel for schedule(dynamic, 1)
-  for (int64_t i = 0; i < static_cast<int64_t>(query_num); ++i) {
-    if (selector != nullptr) {
-      index.spec_filter_search(query + i * query_dim, k, l_search, selector, query_attrs[i],
-                               result_tags.data() + i * k, result_dists.data() + i * k, beamwidth, stats.data() + i);
-    } else {
-      index.pipe_search(query + i * query_dim, k, mem_l, l_search, result_tags.data() + i * k,
-                        result_dists.data() + i * k, beamwidth, stats.data() + i);
+    for (int64_t i = 0; i < static_cast<int64_t>(query_num); ++i) {
+      if (selector != nullptr) {
+        index.spec_filter_search(query + i * query_dim, k, current_l, selector, query_attrs[i],
+                                 result_tags.data() + i * k, result_dists.data() + i * k, beamwidth,
+                                 stats.data() + i);
+      } else {
+        index.pipe_search(query + i * query_dim, k, mem_l, current_l, result_tags.data() + i * k,
+                          result_dists.data() + i * k, beamwidth, stats.data() + i);
+      }
+    }
+
+    std::vector<double> latency_ms(query_num);
+    std::vector<double> ios(query_num);
+    std::vector<double> pre(query_num), in(query_num), post(query_num);
+    for (size_t i = 0; i < query_num; ++i) {
+      latency_ms[i] = stats[i].total_us / 1000.0;
+      ios[i] = stats[i].n_ios;
+      pre[i] = stats[i].n_filter[pipeann::PRE_FILTER];
+      in[i] = stats[i].n_filter[pipeann::IN_FILTER];
+      post[i] = stats[i].n_filter[pipeann::POST_FILTER];
+    }
+    auto sorted = oh::sorted_copy(latency_ms);
+    SearchMetrics metrics;
+    metrics.L = current_l;
+    metrics.avg_latency_ms = oh::mean(latency_ms);
+    metrics.p50_latency_ms = oh::percentile(sorted, 0.50);
+    metrics.p95_latency_ms = oh::percentile(sorted, 0.95);
+    metrics.p99_latency_ms = oh::percentile(sorted, 0.99);
+    metrics.avg_ios = oh::mean(ios);
+    metrics.pre_filter_ratio = oh::mean(pre);
+    metrics.in_filter_ratio = oh::mean(in);
+    metrics.post_filter_ratio = oh::mean(post);
+    if (calc_recall) {
+      metrics.recall = pipeann::calculate_recall(static_cast<uint32_t>(query_num), gt_ids, gt_dists,
+                                                 static_cast<uint32_t>(gt_dim), result_tags.data(),
+                                                 static_cast<uint32_t>(k), static_cast<uint32_t>(k));
+    }
+    return metrics;
+  };
+
+  std::vector<SearchMetrics> sweep;
+  sweep.reserve(l_candidates.size());
+  SearchMetrics selected;
+  bool selected_set = false;
+  for (uint32_t candidate_l : l_candidates) {
+    auto metrics = run_one_l(candidate_l);
+    sweep.push_back(metrics);
+    if (!calc_recall || metrics.recall >= recall_min) {
+      selected = metrics;
+      selected_set = true;
+      break;
     }
   }
-
-  std::vector<double> latency_ms(query_num);
-  std::vector<double> ios(query_num);
-  std::vector<double> pre(query_num), in(query_num), post(query_num);
-  for (size_t i = 0; i < query_num; ++i) {
-    latency_ms[i] = stats[i].total_us / 1000.0;
-    ios[i] = stats[i].n_ios;
-    pre[i] = stats[i].n_filter[pipeann::PRE_FILTER];
-    in[i] = stats[i].n_filter[pipeann::IN_FILTER];
-    post[i] = stats[i].n_filter[pipeann::POST_FILTER];
-  }
-  auto sorted = oh::sorted_copy(latency_ms);
-  float recall = -1.0f;
-  if (calc_recall) {
-    recall = pipeann::calculate_recall(static_cast<uint32_t>(query_num), gt_ids, gt_dists, static_cast<uint32_t>(gt_dim),
-                                       result_tags.data(), static_cast<uint32_t>(k), static_cast<uint32_t>(k));
+  if (!selected_set) {
+    selected = sweep.back();
   }
 
   oh::ensure_parent(out_jsonl);
   std::ofstream out(out_jsonl, std::ios::app);
   out << "{\"selector_id\":\"" << oh::json_escape(selector_id) << "\",\"query_count\":" << query_num
-      << ",\"k\":" << k << ",\"L\":" << l_search << ",\"threads\":" << threads << ",\"recall_at_10\":" << recall
-      << ",\"avg_latency_ms\":" << oh::mean(latency_ms) << ",\"p50_latency_ms\":" << oh::percentile(sorted, 0.50)
-      << ",\"p95_latency_ms\":" << oh::percentile(sorted, 0.95) << ",\"p99_latency_ms\":"
-      << oh::percentile(sorted, 0.99) << ",\"avg_ios\":" << oh::mean(ios) << ",\"pre_filter_ratio\":"
-      << oh::mean(pre) << ",\"in_filter_ratio\":" << oh::mean(in) << ",\"post_filter_ratio\":" << oh::mean(post)
-      << "}\n";
+      << ",\"k\":" << k << ",\"L\":" << selected.L << ",\"selected_L\":" << selected.L << ",\"threads\":"
+      << threads << ",\"recall_at_10\":" << selected.recall << ",\"avg_latency_ms\":" << selected.avg_latency_ms
+      << ",\"p50_latency_ms\":" << selected.p50_latency_ms << ",\"p95_latency_ms\":" << selected.p95_latency_ms
+      << ",\"p99_latency_ms\":" << selected.p99_latency_ms << ",\"avg_ios\":" << selected.avg_ios
+      << ",\"pre_filter_ratio\":" << selected.pre_filter_ratio << ",\"in_filter_ratio\":"
+      << selected.in_filter_ratio << ",\"post_filter_ratio\":" << selected.post_filter_ratio
+      << ",\"l_sweep\":[";
+  for (size_t i = 0; i < sweep.size(); ++i) {
+    if (i != 0) {
+      out << ",";
+    }
+    out << "{\"L\":" << sweep[i].L << ",\"recall_at_10\":" << sweep[i].recall << ",\"avg_latency_ms\":"
+        << sweep[i].avg_latency_ms << "}";
+  }
+  out << "]}\n";
 
   delete selector;
   for (auto &[_, store] : base_stores) {

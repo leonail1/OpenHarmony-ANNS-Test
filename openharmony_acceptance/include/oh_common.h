@@ -115,6 +115,18 @@ inline double mean(const std::vector<double> &values) {
   return std::accumulate(values.begin(), values.end(), 0.0) / static_cast<double>(values.size());
 }
 
+inline std::vector<uint32_t> parse_u32_list(const std::string &text) {
+  std::vector<uint32_t> values;
+  std::stringstream ss(text);
+  std::string item;
+  while (std::getline(ss, item, ',')) {
+    if (!item.empty()) {
+      values.push_back(static_cast<uint32_t>(std::stoul(item)));
+    }
+  }
+  return values;
+}
+
 inline uint64_t now_ms() {
   auto now = std::chrono::steady_clock::now().time_since_epoch();
   return std::chrono::duration_cast<std::chrono::milliseconds>(now).count();

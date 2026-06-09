@@ -63,6 +63,7 @@ BUILD_L=128 \
 PQ_BYTES=32 \
 MEM_GB=64 \
 SEARCH_L=100 \
+L_CANDIDATES=20,40,60,80,100,150,200,300,400,600,800 \
   /path/to/PipeANN/openharmony_acceptance/scripts/run_full_acceptance.sh
 ```
 
@@ -70,6 +71,10 @@ SEARCH_L=100 \
 5-cycle run this is at least 3 million update vectors. The full script uses
 the first `NQUERIES` rows from `QUERY_BIN` so generated query attributes and
 official filtered groundtruth always refer to the same query count.
+
+Static search and dynamic checkpoint search sweep `L_CANDIDATES` per
+selector/selectivity and record the smallest `L` that reaches
+`recall@10 >= 98%`; latency is judged on that selected row.
 
 ## Outputs
 

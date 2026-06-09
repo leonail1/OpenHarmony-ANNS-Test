@@ -25,6 +25,7 @@ BUILD_L=${BUILD_L:-128}
 PQ_BYTES=${PQ_BYTES:-32}
 MEM_GB=${MEM_GB:-64}
 SEARCH_L=${SEARCH_L:-100}
+L_CANDIDATES=${L_CANDIDATES:-20,40,60,80,100,150,200,300,400,600,800}
 K=${K:-10}
 INDEX_PREFIX=${INDEX_PREFIX:-"${WORK_DIR}/index/sift1m"}
 
@@ -101,6 +102,8 @@ while IFS=, read -r selector_id selector_type target_selectivity candidate_count
     --selector-id "${selector_id}" \
     --threads "${THREADS}" \
     --L "${SEARCH_L}" \
+    --L-candidates "${L_CANDIDATES}" \
+    --recall-min "${RECALL_MIN:-98.0}" \
     --k "${K}" \
     --out-jsonl "${RESULTS_DIR}/static_filtered.jsonl"
 done < "${WORK_DIR}/labels/selector_manifest.csv"
@@ -142,6 +145,9 @@ FOREGROUND_CONFIG=${FOREGROUND_CONFIG:-"${WORK_DIR}/labels/intersect_s25.json"}
   --insert-threads "${THREADS}" \
   --search-threads "${THREADS}" \
   --merge-threads "${THREADS}" \
+  --L "${SEARCH_L}" \
+  --L-candidates "${L_CANDIDATES}" \
+  --recall-min "${RECALL_MIN:-98.0}" \
   --selector-manifest "${WORK_DIR}/labels/selector_manifest.csv" \
   --gt-dir "${WORK_DIR}/gt" \
   --out-jsonl "${RESULTS_DIR}/dynamic_chain.jsonl" \
@@ -164,7 +170,7 @@ FOREGROUND_CONFIG=${FOREGROUND_CONFIG:-"${WORK_DIR}/labels/intersect_s25.json"}
   --results-dir "${RESULTS_DIR}" \
   --out-json "${RESULTS_DIR}/acceptance_summary.json" \
   --space-expansion-lt "${SPACE_EXPANSION_LT:-2.0}" \
-  --recall-min "${RECALL_MIN:-0.98}" \
+  --recall-min "${RECALL_MIN:-98.0}" \
   --latency-lt "${LATENCY_LT:-10.0}" \
   --delete-ms-per-vector-lte "${DELETE_MS_PER_VECTOR_LTE:-0.5}" \
   --single-query-max-rss-bytes-lt "${SINGLE_QUERY_MAX_RSS_BYTES_LT:-30000000}"

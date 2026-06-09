@@ -38,6 +38,14 @@ struct LoadedSelector {
   std::vector<pipeann::Attributes> attrs;
 };
 
+struct CheckpointMetrics {
+  uint32_t L = 0;
+  float recall = -1.0f;
+  double avg_latency_ms = 0.0;
+  double p95_latency_ms = 0.0;
+  double p99_latency_ms = 0.0;
+};
+
 std::vector<std::string> split_csv_line(const std::string &line) {
   std::vector<std::string> fields;
   std::string cur;
@@ -180,9 +188,10 @@ void foreground_search(DynamicIndex<T> &index, QueryBundle<T> &queries, uint32_t
 }
 
 template<typename T>
-void checkpoint_search(DynamicIndex<T> &index, T *query, size_t query_num, size_t query_dim, const ManifestRow &row,
-                       const LiveAttrIndexes &live_indexes, const std::filesystem::path &gt_dir, uint32_t cycle,
-                       uint32_t k, uint32_t L, std::ofstream &out) {
+CheckpointMetrics checkpoint_search_once(DynamicIndex<T> &index, T *query, size_t query_num, size_t query_dim,
+                                         const ManifestRow &row, const LiveAttrIndexes &live_indexes,
+                                         const std::filesystem::path &gt_dir, uint32_t cycle, uint32_t k,
+                                         uint32_t L) {
   LoadedSelector loaded;
   if (row.selector_type != "match_all" && row.label_config != "null" && !row.label_config.empty()) {
     loaded = load_selector_from_live_indexes(row.label_config, live_indexes);
@@ -207,7 +216,11 @@ void checkpoint_search(DynamicIndex<T> &index, T *query, size_t query_num, size_
   }
   auto sorted = oh::sorted_copy(latencies);
 
-  float recall = -1.0f;
+  CheckpointMetrics metrics;
+  metrics.L = L;
+  metrics.avg_latency_ms = oh::mean(latencies);
+  metrics.p95_latency_ms = oh::percentile(sorted, 0.95);
+  metrics.p99_latency_ms = oh::percentile(sorted, 0.99);
   auto gt_path = gt_dir / ("cycle" + std::to_string(cycle) + "_" + row.selector_id + ".bin");
   if (std::filesystem::exists(gt_path)) {
     unsigned *gt_ids = nullptr;
@@ -216,18 +229,52 @@ void checkpoint_search(DynamicIndex<T> &index, T *query, size_t query_num, size_
     size_t gt_num = 0, gt_dim = 0;
     pipeann::load_truthset(gt_path.string(), gt_ids, gt_dists, gt_num, gt_dim, &gt_tags);
     if (gt_num == query_num) {
-      recall = pipeann::calculate_recall(static_cast<uint32_t>(query_num), gt_ids, gt_dists, static_cast<uint32_t>(gt_dim),
-                                         result_tags.data(), k, k);
+      metrics.recall =
+          pipeann::calculate_recall(static_cast<uint32_t>(query_num), gt_ids, gt_dists, static_cast<uint32_t>(gt_dim),
+                                    result_tags.data(), k, k);
     }
     delete[] gt_ids;
     delete[] gt_dists;
     delete[] gt_tags;
   }
+  return metrics;
+}
+
+template<typename T>
+void checkpoint_search(DynamicIndex<T> &index, T *query, size_t query_num, size_t query_dim, const ManifestRow &row,
+                       const LiveAttrIndexes &live_indexes, const std::filesystem::path &gt_dir, uint32_t cycle,
+                       uint32_t k, const std::vector<uint32_t> &l_candidates, double recall_min, std::ofstream &out) {
+  std::vector<CheckpointMetrics> sweep;
+  sweep.reserve(l_candidates.size());
+  CheckpointMetrics selected;
+  bool selected_set = false;
+  for (uint32_t candidate_l : l_candidates) {
+    auto metrics = checkpoint_search_once(index, query, query_num, query_dim, row, live_indexes, gt_dir, cycle, k,
+                                          candidate_l);
+    sweep.push_back(metrics);
+    if (metrics.recall >= recall_min) {
+      selected = metrics;
+      selected_set = true;
+      break;
+    }
+  }
+  if (!selected_set) {
+    selected = sweep.back();
+  }
 
   out << "{\"cycle\":" << cycle << ",\"selector_id\":\"" << oh::json_escape(row.selector_id)
-      << "\",\"selector_type\":\"" << oh::json_escape(row.selector_type) << "\",\"recall_at_10\":" << recall
-      << ",\"avg_latency_ms\":" << oh::mean(latencies) << ",\"p95_latency_ms\":" << oh::percentile(sorted, 0.95)
-      << ",\"p99_latency_ms\":" << oh::percentile(sorted, 0.99) << "}\n";
+      << "\",\"selector_type\":\"" << oh::json_escape(row.selector_type) << "\",\"L\":" << selected.L
+      << ",\"selected_L\":" << selected.L << ",\"recall_at_10\":" << selected.recall << ",\"avg_latency_ms\":"
+      << selected.avg_latency_ms << ",\"p95_latency_ms\":" << selected.p95_latency_ms << ",\"p99_latency_ms\":"
+      << selected.p99_latency_ms << ",\"l_sweep\":[";
+  for (size_t i = 0; i < sweep.size(); ++i) {
+    if (i != 0) {
+      out << ",";
+    }
+    out << "{\"L\":" << sweep[i].L << ",\"recall_at_10\":" << sweep[i].recall << ",\"avg_latency_ms\":"
+        << sweep[i].avg_latency_ms << "}";
+  }
+  out << "]}\n";
   out.flush();
 }
 
@@ -245,6 +292,11 @@ int run_dynamic(int argc, char **argv) {
   const uint32_t cycles = args.u32("cycles", 5);
   const uint32_t k = args.u32("k", 10);
   const uint32_t L = args.u32("L", 100);
+  const double recall_min = args.f64("recall-min", 98.0);
+  auto l_candidates = oh::parse_u32_list(args.get("L-candidates", ""));
+  if (l_candidates.empty()) {
+    l_candidates.push_back(L);
+  }
   const uint32_t insert_threads = args.u32("insert-threads", std::max(1u, std::thread::hardware_concurrency() / 2));
   const uint32_t search_threads = args.u32("search-threads", std::max(1u, std::thread::hardware_concurrency() / 2));
   const uint32_t merge_threads = args.u32("merge-threads", std::max(1u, std::thread::hardware_concurrency()));
@@ -337,8 +389,8 @@ int run_dynamic(int argc, char **argv) {
     double insert_ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
     foreground_search(index, queries, k, L, foreground_rounds, "after_insert", cycle, fg);
     for (const auto &row : manifest_rows) {
-      checkpoint_search(index, queries.data, queries.n, queries.dim, row, live_indexes, gt_dir, cycle, k, L,
-                        checkpoint);
+      checkpoint_search(index, queries.data, queries.n, queries.dim, row, live_indexes, gt_dir, cycle, k, l_candidates,
+                        recall_min, checkpoint);
     }
 
     dyn << "{\"cycle\":" << cycle << ",\"delete_begin\":" << begin << ",\"delete_end\":" << end

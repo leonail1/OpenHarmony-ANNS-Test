@@ -251,7 +251,7 @@ int main(int argc, char **argv) {
     const auto results_dir = std::filesystem::path(args.get("results-dir"));
     const auto out_json = std::filesystem::path(args.get("out-json", (results_dir / "acceptance_summary.json").string()));
     const double space_lt = args.f64("space-expansion-lt", 2.0);
-    const double recall_min = args.f64("recall-min", 0.98);
+    const double recall_min = args.f64("recall-min", 98.0);
     const double latency_lt = args.f64("latency-lt", 10.0);
     const double delete_ms_per_vector_lte = args.f64("delete-ms-per-vector-lte", 0.5);
     const int64_t rss_lt = static_cast<int64_t>(args.u64("single-query-max-rss-bytes-lt", 30000000));

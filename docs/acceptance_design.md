@@ -64,7 +64,10 @@ replaces the in-memory attr index map used by insert and merge.
 ## Metrics
 
 - Space: core index bytes divided by raw vector bytes.
-- Static and checkpoint search: recall, avg/p50/p95/p99 latency, IO stats.
+- Static and checkpoint search: per selector/selectivity, sweep configured `L`
+  candidates from small to large, select the smallest `L` reaching
+  `recall@10 >= 98%`, then report recall, avg/p50/p95/p99 latency, and IO stats
+  for that selected row.
 - Dynamic: delete time, merge time, insert time, foreground latency.
 - Single query: runner latency plus `/usr/bin/time -v` max RSS.
 - Summary: `oh_summarize_results` writes `acceptance_summary.json` with the
