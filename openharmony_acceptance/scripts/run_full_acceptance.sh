@@ -60,6 +60,15 @@ mkdir -p "$(dirname "${INDEX_PREFIX}")"
   --index-prefix "${INDEX_PREFIX}" \
   --out-dir "${WORK_DIR}/labels"
 
+QUERY_ACTIVE="${WORK_DIR}/query_${NQUERIES}.bin"
+"${OH_BIN_DIR}/oh_materialize_cycle_vectors" \
+  --type "${TYPE}" \
+  --base "${QUERY_BIN}" \
+  --updates "${QUERY_BIN}" \
+  --cycle 0 \
+  --npoints "${NQUERIES}" \
+  --out "${QUERY_ACTIVE}"
+
 "${TEST_BIN_DIR}/build_disk_index_filtered" \
   "${TYPE}" "${BASE_BIN}" "${INDEX_PREFIX}" \
   "${R}" "${R_DENSE}" "${BUILD_L}" "${PQ_BYTES}" "${MEM_GB}" "${THREADS}" "${METRIC}" pq \
@@ -76,17 +85,17 @@ while IFS=, read -r selector_id selector_type target_selectivity candidate_count
   [[ "${selector_id}" == "selector_id" ]] && continue
   GT="${WORK_DIR}/gt/cycle0_${selector_id}.bin"
   if [[ "${selector_type}" == "match_all" ]]; then
-    "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${BASE_BIN}" "${QUERY_BIN}" "${K}" "${GT}" null null
+    "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${BASE_BIN}" "${QUERY_ACTIVE}" "${K}" "${GT}" null null
     LABEL_ARG="null"
   else
-    "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${BASE_BIN}" "${QUERY_BIN}" "${K}" "${GT}" null "${label_config}"
+    "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${BASE_BIN}" "${QUERY_ACTIVE}" "${K}" "${GT}" null "${label_config}"
     LABEL_ARG="${label_config}"
   fi
   "${OH_BIN_DIR}/oh_static_filtered" \
     --type "${TYPE}" \
     --metric "${METRIC}" \
     --index-prefix "${INDEX_PREFIX}" \
-    --query "${QUERY_BIN}" \
+    --query "${QUERY_ACTIVE}" \
     --gt "${GT}" \
     --label-config "${LABEL_ARG}" \
     --selector-id "${selector_id}" \
@@ -111,9 +120,9 @@ for cycle in $(seq 1 "${CYCLES}"); do
     [[ "${selector_id}" == "selector_id" ]] && continue
     GT="${WORK_DIR}/gt/cycle${cycle}_${selector_id}.bin"
     if [[ "${selector_type}" == "match_all" ]]; then
-      "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${CYCLE_BIN}" "${QUERY_BIN}" "${K}" "${GT}" null null
+      "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${CYCLE_BIN}" "${QUERY_ACTIVE}" "${K}" "${GT}" null null
     else
-      "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${CYCLE_BIN}" "${QUERY_BIN}" "${K}" "${GT}" null "${label_config}"
+      "${UTIL_BIN_DIR}/compute_groundtruth" "${TYPE}" "${METRIC}" "${CYCLE_BIN}" "${QUERY_ACTIVE}" "${K}" "${GT}" null "${label_config}"
     fi
   done < "${WORK_DIR}/labels/selector_manifest.csv"
 done
@@ -124,7 +133,7 @@ FOREGROUND_CONFIG=${FOREGROUND_CONFIG:-"${WORK_DIR}/labels/intersect_s25.json"}
   --metric "${METRIC}" \
   --index-prefix "${INDEX_PREFIX}" \
   --updates "${UPDATES_BIN}" \
-  --query "${QUERY_BIN}" \
+  --query "${QUERY_ACTIVE}" \
   --label-config "${FOREGROUND_CONFIG}" \
   --label-index "${INDEX_PREFIX}.label.0" \
   --range-index "${INDEX_PREFIX}.label.1" \
@@ -143,7 +152,7 @@ FOREGROUND_CONFIG=${FOREGROUND_CONFIG:-"${WORK_DIR}/labels/intersect_s25.json"}
   --type "${TYPE}" \
   --metric "${METRIC}" \
   --index-prefix "${INDEX_PREFIX}" \
-  --query "${QUERY_BIN}" \
+  --query "${QUERY_ACTIVE}" \
   --label-config "${WORK_DIR}/labels/range_s10.json" \
   --selector-id range_s10 \
   --L "${SEARCH_L}" \

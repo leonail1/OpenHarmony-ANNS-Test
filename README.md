@@ -67,7 +67,9 @@ SEARCH_L=100 \
 ```
 
 `UPDATES_BIN` must contain at least `cycles * 600k` rows. For the default
-5-cycle run this is at least 3 million update vectors.
+5-cycle run this is at least 3 million update vectors. The full script uses
+the first `NQUERIES` rows from `QUERY_BIN` so generated query attributes and
+official filtered groundtruth always refer to the same query count.
 
 ## Outputs
 

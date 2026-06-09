@@ -30,7 +30,9 @@ build/tests/utils/compute_groundtruth \
 Static search uses the initial base vectors. Dynamic checkpoint search first
 materializes the current logical 1M vector version with
 `oh_materialize_cycle_vectors`, then calls `compute_groundtruth` for every
-selector.
+selector. Full runs also materialize the first configured `NQUERIES` rows from
+the query file before invoking `compute_groundtruth`, so query attributes and
+query vectors have the same row count.
 
 ## Dynamic Update Semantics
 
