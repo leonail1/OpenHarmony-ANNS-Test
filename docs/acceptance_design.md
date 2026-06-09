@@ -1,37 +1,69 @@
-# Acceptance Design
+# PipeANN C++ Acceptance Design
 
-## Purpose
+The acceptance suite is integrated into PipeANN instead of wrapping PipeANN with
+a Python black-box adapter. This keeps update tests close to the official
+examples: one process holds `DynamicIndex`, performs updates, and searches the
+live index while updates run.
 
-The harness validates whether an ANN search system can satisfy filtered-search acceptance metrics without constraining its internal architecture.
+## Data And Labels
 
-## Public Contract
+`oh_generate_labels` creates PipeANN-native attribute files:
 
-Adapters expose five command-template interfaces:
+- `base_labels.spmat` for equality and intersect selectors.
+- `base_range.bin` for range selectors.
+- one JSON selector config per selector/selectivity pair.
+- `selector_manifest.csv` listing every selector case.
 
-- `ann_build_index`
-- `ann_filter_search`
-- `ann_apply_insert`
-- `ann_apply_delete`
-- `ann_label_selectivity`
+The fixed selectivities are `0.01%, 0.1%, 1%, 5%, 10%, 25%, 50%, 100%`.
+Intersect selectors use PipeANN's `label_and` selector. Range selectors use
+PipeANN's `[lower, upper)` range query format.
 
-The harness records wall time, max RSS, CPU, IO, recall, latency, space ratio, and failures externally. It does not trust the implementation to self-report acceptance metrics except for raw search results and label selectivity counts. Single-query max RSS is enforced as an acceptance metric and defaults to `<30,000,000` bytes.
+## Groundtruth
 
-Groundtruth is computed by the harness-owned C++ exact L2 top-k tool at
-`tools/bin/compute_groundtruth`, built from `tools/cpp/compute_groundtruth.cpp`.
-Implementations under test do not provide or influence groundtruth.
+The only groundtruth path is PipeANN's official C++ tool:
 
-## Labels
+```bash
+build/tests/utils/compute_groundtruth \
+  <type> <metric> <base.bin> <query.bin> <K> <gt.bin> <tag_file|null> <label_config.json|null>
+```
 
-The harness creates a merged CSV label file for build and insert. The first version supports uniform labels only. Equality, range, and intersect workloads cover fixed target selectivities:
+Static search uses the initial base vectors. Dynamic checkpoint search first
+materializes the current logical 1M vector version with
+`oh_materialize_cycle_vectors`, then calls `compute_groundtruth` for every
+selector.
 
-`0.01% / 0.1% / 1% / 5% / 10% / 25% / 50% / 100%`
+## Dynamic Update Semantics
 
-Selectors with fewer than `k` live candidates are marked invalid and are not treated as algorithm failures.
+The runner alternates two 60% continuous delete ranges:
 
-## Tests
+```text
+cycle1: [400k, 1M)
+cycle2: [0, 600k)
+cycle3: [400k, 1M)
+cycle4: [0, 600k)
+cycle5: [400k, 1M)
+```
 
-- Build Space Test: `index_bytes / raw_bytes < 2.0`.
-- Label Selectivity Test: equality/range counts must match the harness live label table.
-- Static Filtered Search Test: all datasets, selector types, and target selectivities; pilot skip at 20 ms; full run at up to 1000 queries. It also records the worst-latency valid selector per dataset in `static_foreground_worst_selectors.jsonl`.
-- Dynamic Update Chain Test: from 0 vectors to target size, then runs 5 cycles of 60% delete and insert back to target size with foreground searches during mutations. Foreground searches must use the worst selector produced by the Static Filtered Search Test in the same `results_dir`; running `dynamic` alone is invalid.
-- Single Query Resource Test: one-query filtered search with no groundtruth; latency and max RSS must both satisfy configured thresholds.
+Each cycle is:
+
+```text
+mark delete -> save/merge_deletes -> insert new vectors with the same tags
+```
+
+Same-tag insertion only happens after merge clears tombstones. Delete timing
+therefore measures only mark-delete, while merge/save is reported separately.
+
+`oh_dynamic_chain` keeps one `DynamicIndex` alive for the whole run. It loads
+the official label and range attr indexes once with `load_attr_index_from_file`
+and constructs native selectors directly. It intentionally does not call
+`load_filter_from_json` during dynamic testing, because that convenience loader
+replaces the in-memory attr index map used by insert and merge.
+
+## Metrics
+
+- Space: core index bytes divided by raw vector bytes.
+- Static and checkpoint search: recall, avg/p50/p95/p99 latency, IO stats.
+- Dynamic: delete time, merge time, insert time, foreground latency.
+- Single query: runner latency plus `/usr/bin/time -v` max RSS.
+- Summary: `oh_summarize_results` writes `acceptance_summary.json` with the
+  final pass/fail decision and compact failure details.

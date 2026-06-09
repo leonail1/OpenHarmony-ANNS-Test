@@ -1,0 +1,15 @@
+pipeann_root: /path/to/PipeANN
+base_bin: /data/sift1m/base.bin
+updates_bin: /data/sift1m/updates_3m.bin
+query_bin: /data/sift1m/query.bin
+type: float
+metric: l2
+npoints: 1000000
+nqueries: 1000
+cycles: 5
+r: 96
+r_dense: 1000
+build_l: 128
+pq_bytes: 32
+memory_gb: 64
+search_l: 100

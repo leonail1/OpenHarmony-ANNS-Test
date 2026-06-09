@@ -1,88 +1,99 @@
-# OpenHarmony ANNS Acceptance Tests
+# OpenHarmony-ANNS-Test
 
-Generic acceptance tests for filtered ANN systems. The harness tests only external behavior: build, filtered search, insert, delete, and label selectivity. It does not assume PipeANN, PQ, prefilter routing, or any specific index layout.
+PipeANN C++ acceptance tests for filtered vector search, space usage, dynamic
+updates, and single-query resource measurement.
 
-## Interfaces
+This repository is not a standalone ANN framework. Copy `openharmony_acceptance/`
+into a PipeANN source tree and build it with PipeANN so the tests can call
+PipeANN C++ APIs directly.
 
-Adapters are configured with command templates in an adapter manifest. Every command must support a `threads` variable.
+## What This Tests
 
-- `ann_build_index`: build an index from vectors, ids, and externally supplied labels. It writes `build_manifest.json` with `raw_data_paths` and `index_output_paths`.
-- `ann_filter_search`: the only search interface. Selectors are `match_all`, `equality`, `intersect`, and `range`.
-- `ann_apply_insert`: insert externally supplied vectors, ids, and labels. It returns the current live vector count.
-- `ann_apply_delete`: delete externally supplied ids. It returns the current live vector count.
-- `ann_label_selectivity`: return `matched_count`, `total_live_count`, and `selectivity` for equality/range selectors.
+- Core index space expansion is below `2.0x` raw vector bytes.
+- Static filtered search covers `match_all`, equality, intersect, and range
+  selectors at `0.01%, 0.1%, 1%, 5%, 10%, 25%, 50%, 100%`.
+- Recall is computed with PipeANN's official `compute_groundtruth` output.
+- Dynamic update uses PipeANN's native `DynamicIndex` in one long-lived process:
+  mark-delete, merge/save, then insert new vectors into the same tag range.
+- The 5-cycle delete ranges alternate between `[400k, 1M)` and `[0, 600k)`.
+- Single-query latency is emitted by the C++ runner; max RSS is measured by
+  `/usr/bin/time -v`.
 
-## Label Workload
+## Integrate Into PipeANN
 
-The test side generates uniform labels for:
-
-`0.01% / 0.1% / 1% / 5% / 10% / 25% / 50% / 100%`
-
-Build and insert commands receive the generated label CSV. Delete commands receive ids only; the system must invalidate labels internally with the deleted vectors.
-
-## Install
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-./tools/build_groundtruth.sh
-```
-
-`tools/build_groundtruth.sh` builds the harness-owned C++ exact L2 top-k
-groundtruth binary. Set `ANNS_GT_BINARY` only when you intentionally want to use
-another compatible binary.
-
-## Run
+From a PipeANN checkout:
 
 ```bash
-python -m anns_acceptance.cli run --config acceptance_config.yaml
+cp -r /path/to/OpenHarmony-ANNS-Test/openharmony_acceptance .
+printf '\nadd_subdirectory(openharmony_acceptance)\n' >> CMakeLists.txt
+cmake -S . -B build -DIO_ENGINE=uring -DUSE_TCMALLOC=OFF
+cmake --build build -j"$(nproc)" --target \
+  oh_generate_labels oh_make_synthetic oh_materialize_cycle_vectors \
+  oh_build_space oh_static_filtered oh_dynamic_chain oh_single_query \
+  oh_summarize_results \
+  compute_groundtruth build_disk_index_filtered
 ```
-
-Direct pytest is also supported:
-
-```bash
-pytest --config acceptance_config.yaml
-pytest -m space --config acceptance_config.yaml
-pytest -m selectivity --config acceptance_config.yaml
-pytest -m static --config acceptance_config.yaml
-pytest -m "static or dynamic" --config acceptance_config.yaml
-pytest -m single_query --config acceptance_config.yaml
-```
-
-`dynamic` intentionally depends on the worst foreground selector selected by the
-`static` test in the same `results_dir`. Running `pytest -m dynamic` alone is
-invalid and should fail before mutation work starts.
 
 ## Smoke
 
 ```bash
-python mock_adapter/create_smoke_dataset.py --out /tmp/anns-smoke
-pytest --config /tmp/anns-smoke/acceptance_config.positive.yaml
+PIPEANN_ROOT=/path/to/PipeANN \
+  /path/to/PipeANN/openharmony_acceptance/scripts/run_smoke.sh
 ```
 
-A negative smoke config is also generated and should fail because the mock search latency is intentionally too high:
+The smoke run creates a small synthetic dataset, builds a filtered disk index,
+generates official filtered groundtruth, runs static search, runs two dynamic
+cycles, records single-query resource output, and writes a real pass/fail
+summary. Smoke uses relaxed default thresholds because tiny synthetic indexes
+are dominated by fixed metadata overhead.
+
+## Full Run
 
 ```bash
-pytest --config /tmp/anns-smoke/acceptance_config.negative.yaml
+PIPEANN_ROOT=/path/to/PipeANN \
+BASE_BIN=/data/sift1m/base.bin \
+UPDATES_BIN=/data/sift1m/updates_3m.bin \
+QUERY_BIN=/data/sift1m/query.bin \
+TYPE=float \
+NPOINTS=1000000 \
+NQUERIES=1000 \
+R=96 \
+R_DENSE=1000 \
+BUILD_L=128 \
+PQ_BYTES=32 \
+MEM_GB=64 \
+SEARCH_L=100 \
+  /path/to/PipeANN/openharmony_acceptance/scripts/run_full_acceptance.sh
 ```
 
-A second negative smoke config should fail because the mock search process intentionally exceeds the single-query max RSS threshold:
-
-```bash
-pytest -m single_query --config /tmp/anns-smoke/acceptance_config.rss_negative.yaml
-```
-
-Single-query RSS is measured through two channels. The official acceptance RSS
-is GNU `/usr/bin/time -v`; result rows report it as both
-`time_v_max_rss_bytes` and `max_rss_bytes`. The harness also samples the adapter
-process tree with `psutil` and reports `psutil_max_rss_bytes`,
-`rss_measurement_delta_bytes`, and `rss_measurement_ratio` as a sanity check. By
-default the single-query test requires time-v RSS and uses only that value for
-the RSS threshold. Set `require_psutil_rss_sanity: true` when debugging the
-measurement path and you want the test to fail on missing or divergent psutil
-samples.
+`UPDATES_BIN` must contain at least `cycles * 600k` rows. For the default
+5-cycle run this is at least 3 million update vectors.
 
 ## Outputs
 
-The results directory contains JSON/JSONL/CSV artifacts, including space audit, label selectivity, static search, dynamic update chain, foreground latency, mutation timing, single-query resources, and `acceptance_summary.json`.
+The scripts write compact artifacts only:
+
+- `space_audit.json/csv`
+- `static_filtered.jsonl`
+- `dynamic_chain.jsonl`
+- `foreground_latency.jsonl`
+- `dynamic_checkpoint_search.jsonl`
+- `single_query_resource.jsonl`
+- `single_query_time.txt`
+- `acceptance_summary.json`
+
+Large datasets, index files, generated GT files, and full experiment results are
+not committed.
+
+## Dynamic Filter Path
+
+The dynamic runner does not call `DynamicIndex::load_filter_from_json()`.
+Instead it loads the official label/range attr indexes once with
+`load_attr_index_from_file()` and constructs PipeANN native selectors directly:
+
+- equality: `LabelOrSelector`
+- intersect: `LabelAndSelector`
+- range: `RangeSelector`
+
+This keeps the live attr index map stable while `remove()`, `save()`, and
+`insert()` update the same label/range indexes.

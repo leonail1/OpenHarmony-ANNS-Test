@@ -11,3 +11,9 @@ tools/bin/
 
 build/
 *.egg-info/
+acceptance_work/
+acceptance_results/
+*.bin
+*.spmat
+*.index
+*.tags
