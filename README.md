@@ -18,6 +18,9 @@ PipeANN C++ APIs directly.
 - The 5-cycle delete ranges alternate between `[400k, 1M)` and `[0, 600k)`.
 - Single-query latency is emitted by the C++ runner; max RSS is measured by
   `/usr/bin/time -v`.
+- Search latency acceptance is measured with one search thread by default
+  (`SEARCH_THREADS=1`). Build, groundtruth generation, insert, and merge may
+  still use all CPU cores through `THREADS=$(nproc)`.
 
 ## Integrate Into PipeANN
 
@@ -62,6 +65,7 @@ R_DENSE=0 \
 BUILD_L=128 \
 PQ_BYTES=32 \
 MEM_GB=64 \
+SEARCH_THREADS=1 \
 SEARCH_L=100 \
 L_CANDIDATES=20,40,60,80,100,150,200,300,400,600,800 \
   /path/to/PipeANN/openharmony_acceptance/scripts/run_full_acceptance.sh
@@ -74,7 +78,10 @@ official filtered groundtruth always refer to the same query count.
 
 Static search and dynamic checkpoint search sweep `L_CANDIDATES` per
 selector/selectivity and record the smallest `L` that reaches
-`recall@10 >= 98%`; latency is judged on that selected row.
+`recall@10 >= 98%`; latency is judged on that selected row. The latency rows
+are produced with `SEARCH_THREADS=1` unless explicitly overridden. This keeps
+per-query latency separate from multi-query throughput and avoids counting
+multi-thread queueing tail effects as single-query latency.
 
 ## Outputs
 

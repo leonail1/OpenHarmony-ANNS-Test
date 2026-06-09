@@ -9,6 +9,7 @@ UTIL_BIN_DIR=${UTIL_BIN_DIR:-"${BUILD_DIR}/tests/utils"}
 WORK_DIR=${WORK_DIR:-"${PIPEANN_ROOT}/acceptance_work/full"}
 RESULTS_DIR=${RESULTS_DIR:-"${PIPEANN_ROOT}/acceptance_results/full"}
 THREADS=${THREADS:-$(nproc)}
+SEARCH_THREADS=${SEARCH_THREADS:-1}
 
 : "${BASE_BIN:?Set BASE_BIN to the 1M base .bin file}"
 : "${UPDATES_BIN:?Set UPDATES_BIN to at least 3M update vectors in .bin format}"
@@ -100,7 +101,7 @@ while IFS=, read -r selector_id selector_type target_selectivity candidate_count
     --gt "${GT}" \
     --label-config "${LABEL_ARG}" \
     --selector-id "${selector_id}" \
-    --threads "${THREADS}" \
+    --threads "${SEARCH_THREADS}" \
     --L "${SEARCH_L}" \
     --L-candidates "${L_CANDIDATES}" \
     --recall-min "${RECALL_MIN:-98.0}" \
@@ -143,7 +144,7 @@ FOREGROUND_CONFIG=${FOREGROUND_CONFIG:-"${WORK_DIR}/labels/intersect_s25.json"}
   --npoints "${NPOINTS}" \
   --cycles "${CYCLES}" \
   --insert-threads "${THREADS}" \
-  --search-threads "${THREADS}" \
+  --search-threads "${SEARCH_THREADS}" \
   --merge-threads "${THREADS}" \
   --L "${SEARCH_L}" \
   --L-candidates "${L_CANDIDATES}" \

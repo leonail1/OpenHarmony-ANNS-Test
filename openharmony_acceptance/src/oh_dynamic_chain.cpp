@@ -158,7 +158,7 @@ struct QueryBundle {
 
 template<typename T>
 void foreground_search(DynamicIndex<T> &index, QueryBundle<T> &queries, uint32_t k, uint32_t L, uint32_t rounds,
-                       const std::string &phase, uint32_t cycle, std::ofstream &out) {
+                       uint32_t search_threads, const std::string &phase, uint32_t cycle, std::ofstream &out) {
   if (queries.n == 0 || rounds == 0) {
     return;
   }
@@ -182,6 +182,7 @@ void foreground_search(DynamicIndex<T> &index, QueryBundle<T> &queries, uint32_t
   }
   auto sorted = oh::sorted_copy(latencies);
   out << "{\"cycle\":" << cycle << ",\"phase\":\"" << phase << "\",\"rounds\":" << rounds
+      << ",\"threads\":" << search_threads
       << ",\"avg_latency_ms\":" << oh::mean(latencies) << ",\"p95_latency_ms\":" << oh::percentile(sorted, 0.95)
       << ",\"p99_latency_ms\":" << oh::percentile(sorted, 0.99) << "}\n";
   out.flush();
@@ -191,7 +192,7 @@ template<typename T>
 CheckpointMetrics checkpoint_search_once(DynamicIndex<T> &index, T *query, size_t query_num, size_t query_dim,
                                          const ManifestRow &row, const LiveAttrIndexes &live_indexes,
                                          const std::filesystem::path &gt_dir, uint32_t cycle, uint32_t k,
-                                         uint32_t L) {
+                                         uint32_t L, uint32_t search_threads) {
   LoadedSelector loaded;
   if (row.selector_type != "match_all" && row.label_config != "null" && !row.label_config.empty()) {
     loaded = load_selector_from_live_indexes(row.label_config, live_indexes);
@@ -203,6 +204,7 @@ CheckpointMetrics checkpoint_search_once(DynamicIndex<T> &index, T *query, size_
   std::vector<uint32_t> result_tags(query_num * k);
   std::vector<float> result_dists(query_num * k);
   std::vector<pipeann::QueryStats> stats(query_num);
+  omp_set_num_threads(search_threads);
 #pragma omp parallel for schedule(dynamic, 1)
   for (int64_t i = 0; i < static_cast<int64_t>(query_num); ++i) {
     index.search(query + static_cast<size_t>(i) * query_dim, k, L, result_tags.data() + static_cast<size_t>(i) * k,
@@ -243,14 +245,15 @@ CheckpointMetrics checkpoint_search_once(DynamicIndex<T> &index, T *query, size_
 template<typename T>
 void checkpoint_search(DynamicIndex<T> &index, T *query, size_t query_num, size_t query_dim, const ManifestRow &row,
                        const LiveAttrIndexes &live_indexes, const std::filesystem::path &gt_dir, uint32_t cycle,
-                       uint32_t k, const std::vector<uint32_t> &l_candidates, double recall_min, std::ofstream &out) {
+                       uint32_t k, const std::vector<uint32_t> &l_candidates, double recall_min,
+                       uint32_t search_threads, std::ofstream &out) {
   std::vector<CheckpointMetrics> sweep;
   sweep.reserve(l_candidates.size());
   CheckpointMetrics selected;
   bool selected_set = false;
   for (uint32_t candidate_l : l_candidates) {
     auto metrics = checkpoint_search_once(index, query, query_num, query_dim, row, live_indexes, gt_dir, cycle, k,
-                                          candidate_l);
+                                          candidate_l, search_threads);
     sweep.push_back(metrics);
     if (metrics.recall >= recall_min) {
       selected = metrics;
@@ -264,7 +267,8 @@ void checkpoint_search(DynamicIndex<T> &index, T *query, size_t query_num, size_
 
   out << "{\"cycle\":" << cycle << ",\"selector_id\":\"" << oh::json_escape(row.selector_id)
       << "\",\"selector_type\":\"" << oh::json_escape(row.selector_type) << "\",\"L\":" << selected.L
-      << ",\"selected_L\":" << selected.L << ",\"recall_at_10\":" << selected.recall << ",\"avg_latency_ms\":"
+      << ",\"selected_L\":" << selected.L << ",\"threads\":" << search_threads
+      << ",\"recall_at_10\":" << selected.recall << ",\"avg_latency_ms\":"
       << selected.avg_latency_ms << ",\"p95_latency_ms\":" << selected.p95_latency_ms << ",\"p99_latency_ms\":"
       << selected.p99_latency_ms << ",\"l_sweep\":[";
   for (size_t i = 0; i < sweep.size(); ++i) {
@@ -353,11 +357,11 @@ int run_dynamic(int argc, char **argv) {
     index.remove(tags.data(), static_cast<uint32_t>(tags.size()));
     auto t1 = std::chrono::high_resolution_clock::now();
     double delete_ms = std::chrono::duration<double, std::milli>(t1 - t0).count();
-    foreground_search(index, queries, k, L, foreground_rounds, "after_mark_delete", cycle, fg);
+    foreground_search(index, queries, k, L, foreground_rounds, search_threads, "after_mark_delete", cycle, fg);
 
     auto merge_future = std::async(std::launch::async, [&]() { index.save(index.index_prefix(), merge_threads); });
     while (merge_future.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) {
-      foreground_search(index, queries, k, L, foreground_rounds, "merge", cycle, fg);
+      foreground_search(index, queries, k, L, foreground_rounds, search_threads, "merge", cycle, fg);
     }
     merge_future.get();
     auto t2 = std::chrono::high_resolution_clock::now();
@@ -382,21 +386,22 @@ int run_dynamic(int argc, char **argv) {
       }
     });
     while (insert_future.wait_for(std::chrono::milliseconds(1)) != std::future_status::ready) {
-      foreground_search(index, queries, k, L, foreground_rounds, "insert", cycle, fg);
+      foreground_search(index, queries, k, L, foreground_rounds, search_threads, "insert", cycle, fg);
     }
     insert_future.get();
     auto t3 = std::chrono::high_resolution_clock::now();
     double insert_ms = std::chrono::duration<double, std::milli>(t3 - t2).count();
-    foreground_search(index, queries, k, L, foreground_rounds, "after_insert", cycle, fg);
+    foreground_search(index, queries, k, L, foreground_rounds, search_threads, "after_insert", cycle, fg);
     for (const auto &row : manifest_rows) {
       checkpoint_search(index, queries.data, queries.n, queries.dim, row, live_indexes, gt_dir, cycle, k, l_candidates,
-                        recall_min, checkpoint);
+                        recall_min, search_threads, checkpoint);
     }
 
     dyn << "{\"cycle\":" << cycle << ",\"delete_begin\":" << begin << ",\"delete_end\":" << end
         << ",\"deleted_count\":" << count << ",\"delete_ms\":" << delete_ms
         << ",\"delete_ms_per_vector\":" << (delete_ms / static_cast<double>(count)) << ",\"merge_ms\":" << merge_ms
-        << ",\"insert_ms\":" << insert_ms << ",\"live_count\":" << npoints << "}\n";
+        << ",\"insert_ms\":" << insert_ms << ",\"search_threads\":" << search_threads
+        << ",\"live_count\":" << npoints << "}\n";
     dyn.flush();
   }
   return 0;

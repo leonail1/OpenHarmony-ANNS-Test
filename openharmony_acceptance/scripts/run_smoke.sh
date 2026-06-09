@@ -9,6 +9,7 @@ UTIL_BIN_DIR=${UTIL_BIN_DIR:-"${BUILD_DIR}/tests/utils"}
 WORK_DIR=${WORK_DIR:-"${PIPEANN_ROOT}/acceptance_work/smoke"}
 RESULTS_DIR=${RESULTS_DIR:-"${PIPEANN_ROOT}/acceptance_results/smoke"}
 THREADS=${THREADS:-$(nproc)}
+SEARCH_THREADS=${SEARCH_THREADS:-1}
 
 safe_reset_dir() {
   local dir="$1"
@@ -79,7 +80,7 @@ while IFS=, read -r selector_id selector_type target_selectivity candidate_count
     --gt "${GT}" \
     --label-config "${LABEL_ARG}" \
     --selector-id "${selector_id}" \
-    --threads "${THREADS}" \
+    --threads "${SEARCH_THREADS}" \
     --L 100 \
     --k 10 \
     --out-jsonl "${RESULTS_DIR}/static_filtered.jsonl"
@@ -117,7 +118,7 @@ done
   --npoints 2000 \
   --cycles 2 \
   --insert-threads "${THREADS}" \
-  --search-threads "${THREADS}" \
+  --search-threads "${SEARCH_THREADS}" \
   --merge-threads "${THREADS}" \
   --foreground-rounds 4 \
   --selector-manifest "${WORK_DIR}/labels/selector_manifest.csv" \
